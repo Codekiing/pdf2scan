@@ -8,9 +8,29 @@
 
 ![四组原图与 pdf2scan 彩色、黑白效果对比](assets/showcase-original-color-grayscale.jpg)
 
-## 安装与使用
+## 安装
 
 将整个 `pdf2scan/` 文件夹放入 Codex 的 `~/.agents/skills/` 或 Claude Code 的 `~/.claude/skills/`。需要 Python 3.10+ 和 Bash；在此文件夹运行 `bash scripts/setup.sh` 一次即可安装依赖。若要使用已有 Python 环境，可安装 `requirements.txt` 并将 `PDF2SCAN_PYTHON` 指向对应解释器。
+
+## Skill 使用示例
+
+在 **Codex** 中输入（默认保留彩色）：
+
+```text
+$pdf2scan 请把 /path/to/document.pdf 转成彩色扫描件，保存为 /path/to/document-scan.pdf。
+```
+
+在 **Claude Code** 中输入（明确要求黑白）：
+
+```text
+/pdf2scan 请把 /path/to/photo.jpg 转成黑白扫描件，保存为 /path/to/photo-scan.pdf。
+```
+
+将示例路径换成自己的文件路径。也可以指定一个图片目录，让 skill 按文件名顺序合并输出为一份 PDF。
+
+## 命令行
+
+在此文件夹运行：
 
 ```bash
 bash scripts/run.sh input.pdf --output scan.pdf
