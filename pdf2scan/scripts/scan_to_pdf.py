@@ -447,10 +447,9 @@ def enforce_pure_tones(image: np.ndarray, source: np.ndarray) -> np.ndarray:
     return output
 
 
-def compose_tilted_page(page: np.ndarray, background_photo: np.ndarray,
-                        max_tilt_percent: float, rng: np.random.Generator,
-                        grayscale: bool) -> tuple[np.ndarray, float, float]:
-    """Place a lightly tilted page over the supplied shadow photograph."""
+def rotate_and_crop_page(page: np.ndarray, max_tilt_percent: float,
+                         rng: np.random.Generator) -> tuple[np.ndarray, float, float]:
+    """Rotate the complete page, fill uncovered pixels white, then crop."""
     if page.ndim == 2:
         page = cv2.cvtColor(page, cv2.COLOR_GRAY2BGR)
     height, width = page.shape[:2]
@@ -459,31 +458,12 @@ def compose_tilted_page(page: np.ndarray, background_photo: np.ndarray,
     matrix = cv2.getRotationMatrix2D(((width - 1) / 2, (height - 1) / 2),
                                      angle, 1.0)
 
-    photo_height, photo_width = background_photo.shape[:2]
-    fit = max(width / photo_width, height / photo_height)
-    backdrop = cv2.resize(background_photo,
-                          (max(width, round(photo_width * fit)),
-                           max(height, round(photo_height * fit))),
-                          interpolation=cv2.INTER_CUBIC)
-    y0 = (backdrop.shape[0] - height) // 2
-    x0 = (backdrop.shape[1] - width) // 2
-    backdrop = backdrop[y0:y0 + height, x0:x0 + width]
-    if grayscale:
-        backdrop = cv2.cvtColor(cv2.cvtColor(backdrop, cv2.COLOR_BGR2GRAY),
-                                cv2.COLOR_GRAY2BGR)
-
-    mask = cv2.warpAffine(np.full((height, width), 255, np.uint8), matrix,
-                          (width, height), flags=cv2.INTER_LINEAR,
-                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     rotated = cv2.warpAffine(page, matrix, (width, height),
                              flags=cv2.INTER_CUBIC,
                              borderMode=cv2.BORDER_CONSTANT,
                              borderValue=(255, 255, 255))
-    alpha = mask.astype(np.float32)[:, :, None] / 255
-    output = np.uint8(np.clip(rotated.astype(np.float32) * alpha
-                              + backdrop.astype(np.float32) * (1 - alpha), 0, 255))
     # Anchor the selection at (0, 0). Pull its right and bottom boundaries
-    # inward to the first rotated paper corners, trimming exposed background
+    # inward to the first rotated paper corners, trimming white border
     # on those sides without moving the top or left edges.
     corners = np.float32([[0, 0, 1], [width - 1, 0, 1],
                           [width - 1, height - 1, 1], [0, height - 1, 1]])
@@ -495,7 +475,7 @@ def compose_tilted_page(page: np.ndarray, background_photo: np.ndarray,
                                                      rotated_corners[2, 0]))) - 1))
         crop_bottom = min(height, max(1, int(np.floor(min(rotated_corners[2, 1],
                                                        rotated_corners[3, 1]))) - 1))
-    return output[:crop_bottom, :crop_right], slope, angle
+    return rotated[:crop_bottom, :crop_right], slope, angle
 
 
 def size_page(image: np.ndarray, max_dimension: int,
@@ -611,7 +591,6 @@ def main() -> int:
                         help="maximum automatic page deskew in degrees, 0–2; 0 disables it")
     parser.add_argument("--tilt-percent", type=float, default=0.25,
                         help="maximum final random page-edge slope in percent, 0–1 (default 0.25)")
-    parser.add_argument("--background-image", type=Path, help="photo behind the tilted page; defaults to the bundled shadow photo")
     parser.add_argument("--seed", type=int, help="optional random seed for reproducible tilt")
     args = parser.parse_args()
     limits = (
@@ -631,10 +610,6 @@ def main() -> int:
     if not isinstance(overrides, dict):
         parser.error("--quads must contain a JSON object")
     inputs = collect_inputs(args.inputs, args.output)
-    background_path = args.background_image or Path(__file__).resolve().parent.parent / "assets" / "wood-shadow-reference.jpg"
-    background_photo = cv2.imread(str(background_path), cv2.IMREAD_COLOR)
-    if background_photo is None:
-        raise ValueError(f"Could not read background image: {background_path}")
     rng = np.random.default_rng(args.seed)
     pdf = pymupdf.open()
     try:
@@ -653,9 +628,8 @@ def main() -> int:
                     corrected, quads, method, deskew_angles, aspect = prepare_photograph(
                         key, image, overrides.get(key, overrides.get(path.name)), args)
                 scanned = style_page(corrected, is_pdf, args)
-                scanned, slope, angle = compose_tilted_page(
-                    scanned, background_photo, args.tilt_percent, rng,
-                    args.color_mode == "grayscale")
+                scanned, slope, angle = rotate_and_crop_page(
+                    scanned, args.tilt_percent, rng)
                 success, encoded = cv2.imencode(".png", scanned)
                 if not success:
                     raise RuntimeError(f"Could not encode {key}")
